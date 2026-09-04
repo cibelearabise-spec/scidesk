@@ -1,0 +1,506 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<title>SciDesk — Mesa Editorial de Agentes</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Source+Serif+4:ital,wght@0,400;0,600;0,700;1,400&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap');
+
+  :root{
+    --paper: #EDE8DC;
+    --paper-alt: #E4DECD;
+    --ink: #1E2A3A;
+    --ink-soft: #4A5568;
+    --rule: #C9BFA8;
+    --crimson: #8C2F39;
+    --crimson-soft: #B9535E;
+    --green-ok: #4B6B4F;
+    --white: #FAF8F2;
+  }
+  *{box-sizing:border-box;}
+  body{
+    margin:0;
+    background:var(--paper);
+    color:var(--ink);
+    font-family:'IBM Plex Sans', sans-serif;
+    font-size:15px;
+    line-height:1.5;
+  }
+  .masthead{
+    border-bottom: 3px double var(--ink);
+    padding: 28px 40px 18px;
+    display:flex;
+    justify-content:space-between;
+    align-items:flex-end;
+    flex-wrap:wrap;
+    gap:12px;
+  }
+  .masthead h1{
+    font-family:'Source Serif 4', serif;
+    font-weight:700;
+    font-size:2.4rem;
+    margin:0;
+    letter-spacing:-0.5px;
+  }
+  .masthead .kicker{
+    font-family:'Source Serif 4', serif;
+    font-style:italic;
+    color:var(--ink-soft);
+    font-size:1rem;
+    margin-top:4px;
+  }
+  .masthead .issue{
+    font-family:'IBM Plex Mono', monospace;
+    font-size:0.78rem;
+    color:var(--ink-soft);
+    text-align:right;
+  }
+
+  .layout{
+    display:grid;
+    grid-template-columns: 340px 1fr;
+    gap:0;
+    min-height: calc(100vh - 100px);
+  }
+  @media (max-width: 900px){
+    .layout{grid-template-columns: 1fr;}
+  }
+
+  .desk{
+    border-right: 1px solid var(--rule);
+    padding: 26px 28px;
+    background: var(--paper-alt);
+  }
+  .desk h2{
+    font-family:'Source Serif 4', serif;
+    font-size:1.05rem;
+    margin: 0 0 16px;
+    border-bottom:1px solid var(--rule);
+    padding-bottom:8px;
+  }
+  label{
+    display:block;
+    font-size:0.78rem;
+    color:var(--ink-soft);
+    margin: 14px 0 5px;
+    font-weight:500;
+  }
+  input[type=text], textarea, select{
+    width:100%;
+    background:var(--white);
+    border:1px solid var(--rule);
+    color:var(--ink);
+    padding:8px 10px;
+    font-family:'IBM Plex Sans', sans-serif;
+    font-size:0.85rem;
+    border-radius:2px;
+  }
+  textarea{resize:vertical; min-height:110px; line-height:1.4;}
+  input:focus, textarea:focus, select:focus{
+    outline:none;
+    border-color:var(--crimson);
+  }
+  .row2{display:grid; grid-template-columns:1fr 1fr; gap:10px;}
+
+  .run-btn{
+    margin-top:22px;
+    width:100%;
+    background:var(--crimson);
+    color:var(--white);
+    border:none;
+    padding:12px;
+    font-family:'IBM Plex Sans', sans-serif;
+    font-weight:600;
+    font-size:0.9rem;
+    cursor:pointer;
+    border-radius:2px;
+    transition: background .15s ease;
+  }
+  .run-btn:hover{background:var(--crimson-soft);}
+  .run-btn:disabled{background:#A99; cursor:not-allowed;}
+
+  .agents{
+    margin-top: 26px;
+  }
+  .agent{
+    display:flex;
+    gap:10px;
+    align-items:flex-start;
+    padding: 9px 0;
+    border-bottom: 1px solid rgba(0,0,0,0.06);
+  }
+  .agent .dot{
+    width:9px; height:9px; border-radius:50%;
+    background: #C9BFA8;
+    margin-top:5px;
+    flex-shrink:0;
+    transition: background .2s ease;
+  }
+  .agent.active .dot{background: var(--crimson); box-shadow:0 0 0 3px rgba(140,47,57,0.15);}
+  .agent.done .dot{background: var(--green-ok);}
+  .agent .meta strong{font-size:0.83rem; display:block;}
+  .agent .meta span{font-size:0.74rem; color:var(--ink-soft);}
+
+  .stage{
+    padding: 30px 44px;
+    overflow-y:auto;
+  }
+  .stage-empty{
+    font-family:'Source Serif 4', serif;
+    font-style:italic;
+    color:var(--ink-soft);
+    font-size:1.05rem;
+    max-width:520px;
+    margin-top:60px;
+  }
+  .manuscript{
+    max-width: 760px;
+  }
+  .manuscript h3.section-title{
+    font-family:'IBM Plex Mono', monospace;
+    font-size:0.72rem;
+    letter-spacing:1px;
+    color:var(--crimson);
+    margin: 30px 0 6px;
+    text-transform:uppercase;
+  }
+  .manuscript .section-body{
+    font-family:'Source Serif 4', serif;
+    font-size:1.02rem;
+    line-height:1.7;
+    white-space:pre-wrap;
+    border-left: 2px solid var(--rule);
+    padding-left: 16px;
+  }
+  .section-body.streaming::after{
+    content:'▌';
+    animation: blink 1s step-start infinite;
+    color: var(--crimson);
+  }
+  @keyframes blink{50%{opacity:0;}}
+
+  .toolbar{
+    display:flex; gap:10px; margin-bottom: 6px;
+  }
+  .toolbar button{
+    background:transparent;
+    border:1px solid var(--rule);
+    color:var(--ink);
+    font-family:'IBM Plex Mono', monospace;
+    font-size:0.72rem;
+    padding:6px 12px;
+    border-radius:2px;
+    cursor:pointer;
+  }
+  .toolbar button:hover{border-color:var(--crimson); color:var(--crimson);}
+
+  .wordcount{
+    font-family:'IBM Plex Mono', monospace;
+    font-size:0.72rem;
+    color:var(--ink-soft);
+    margin-top: 4px;
+  }
+  .wordcount.over{color:var(--crimson); font-weight:600;}
+
+  .error-box{
+    background:#F4E5E6;
+    border:1px solid var(--crimson);
+    color:var(--crimson);
+    padding:12px 14px;
+    font-size:0.82rem;
+    border-radius:2px;
+    margin-bottom:16px;
+  }
+
+  ::-webkit-scrollbar{width:8px;}
+  ::-webkit-scrollbar-thumb{background:var(--rule); border-radius:4px;}
+</style>
+</head>
+<body>
+
+<div class="masthead">
+  <div>
+    <h1>SciDesk</h1>
+    <div class="kicker">mesa editorial de agentes para artigos e resumos de congresso</div>
+  </div>
+  <div class="issue" id="dateline"></div>
+</div>
+
+<div class="layout">
+  <div class="desk">
+    <h2>Manuscrito</h2>
+
+    <label>Título / tema da pesquisa</label>
+    <input type="text" id="title" placeholder="Ex.: Biomecânica dos alinhadores ortodônticos">
+
+    <label>Tipo de entrega</label>
+    <select id="outputType">
+      <option value="artigo">Artigo científico completo (IMRAD)</option>
+      <option value="resumo">Resumo estruturado para congresso</option>
+    </select>
+
+    <div class="row2">
+      <div>
+        <label>Idioma</label>
+        <select id="lang">
+          <option value="pt-BR">Português</option>
+          <option value="en">Inglês</option>
+        </select>
+      </div>
+      <div>
+        <label>Estilo de citação</label>
+        <select id="citeStyle">
+          <option value="Vancouver">Vancouver</option>
+          <option value="ABNT">ABNT</option>
+          <option value="APA">APA</option>
+        </select>
+      </div>
+    </div>
+
+    <label id="limitLabel">Limite de palavras (resumo)</label>
+    <input type="text" id="wordLimit" placeholder="Ex.: 300">
+
+    <label>Periódico / congresso alvo (opcional)</label>
+    <input type="text" id="venue" placeholder="Ex.: SBPqO, IADR, revista X">
+
+    <label>Dados, achados e notas brutas</label>
+    <textarea id="rawData" placeholder="Cole aqui: objetivo do estudo, metodologia usada, principais resultados, números, conclusões preliminares, referências-chave..."></textarea>
+
+    <button class="run-btn" id="runBtn">Acionar equipe editorial</button>
+
+    <div class="agents" id="agentList"></div>
+  </div>
+
+  <div class="stage" id="stage">
+    <div class="stage-empty" id="stageEmpty">
+      A mesa está vazia. Preencha os dados do manuscrito à esquerda e acione a equipe — cinco agentes vão estruturar, redigir, condensar, formatar às normas e revisar o texto, em sequência.
+    </div>
+    <div class="manuscript" id="manuscript" style="display:none;"></div>
+  </div>
+</div>
+
+<script>
+const dateline = document.getElementById('dateline');
+const today = new Date();
+dateline.textContent = today.toLocaleDateString('pt-BR', {day:'2-digit', month:'long', year:'numeric'}).toUpperCase();
+
+const AGENTS = [
+  { id:'curador', name:'Curador de Dados', role:'Organiza achados brutos na estrutura IMRAD', },
+  { id:'redator', name:'Redator Científico', role:'Redige o corpo do texto em prosa acadêmica' },
+  { id:'sintetizador', name:'Sintetizador de Resumo', role:'Condensa ao limite de palavras exigido' },
+  { id:'normas', name:'Editor de Normas', role:'Ajusta citações e formato ao padrão escolhido' },
+  { id:'revisor', name:'Revisor Crítico', role:'Aponta lacunas e dá parecer final' },
+];
+
+const agentListEl = document.getElementById('agentList');
+AGENTS.forEach(a=>{
+  const div = document.createElement('div');
+  div.className = 'agent';
+  div.id = 'agent-'+a.id;
+  div.innerHTML = `<div class="dot"></div><div class="meta"><strong>${a.name}</strong><span>${a.role}</span></div>`;
+  agentListEl.appendChild(div);
+});
+
+function setAgentState(id, state){
+  const el = document.getElementById('agent-'+id);
+  el.classList.remove('active','done');
+  if(state) el.classList.add(state);
+}
+
+const outputTypeEl = document.getElementById('outputType');
+const limitLabel = document.getElementById('limitLabel');
+outputTypeEl.addEventListener('change', ()=>{
+  limitLabel.textContent = outputTypeEl.value === 'resumo' ? 'Limite de palavras (resumo)' : 'Limite de palavras (opcional, por seção)';
+});
+
+async function callClaude(systemPrompt, userPrompt){
+  const response = await fetch("https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      model: "claude-sonnet-4-6",
+      max_tokens: 2000,
+      system: systemPrompt,
+      messages: [{ role: "user", content: userPrompt }]
+    })
+  });
+  if(!response.ok){
+    const t = await response.text();
+    throw new Error('Falha na chamada da API: ' + t.slice(0,200));
+  }
+  const data = await response.json();
+  const textBlock = data.content.find(b => b.type === 'text');
+  return textBlock ? textBlock.text : '';
+}
+
+function addSection(title){
+  const manuscript = document.getElementById('manuscript');
+  const h = document.createElement('h3');
+  h.className = 'section-title';
+  h.textContent = title;
+  const body = document.createElement('div');
+  body.className = 'section-body streaming';
+  body.textContent = '';
+  manuscript.appendChild(h);
+  manuscript.appendChild(body);
+  return body;
+}
+
+function wordCount(str){
+  return str.trim().split(/\s+/).filter(Boolean).length;
+}
+
+document.getElementById('runBtn').addEventListener('click', runPipeline);
+
+async function runPipeline(){
+  const title = document.getElementById('title').value.trim();
+  const rawData = document.getElementById('rawData').value.trim();
+  const outputType = outputTypeEl.value;
+  const lang = document.getElementById('lang').value;
+  const citeStyle = document.getElementById('citeStyle').value;
+  const wordLimit = document.getElementById('wordLimit').value.trim();
+  const venue = document.getElementById('venue').value.trim();
+
+  if(!title || !rawData){
+    alert('Preencha ao menos o título e os dados/achados da pesquisa.');
+    return;
+  }
+
+  const btn = document.getElementById('runBtn');
+  btn.disabled = true;
+  btn.textContent = 'Equipe em trabalho...';
+
+  document.getElementById('stageEmpty').style.display = 'none';
+  const manuscript = document.getElementById('manuscript');
+  manuscript.style.display = 'block';
+  manuscript.innerHTML = '';
+
+  const toolbar = document.createElement('div');
+  toolbar.className = 'toolbar';
+  toolbar.innerHTML = `<button id="copyBtn">Copiar texto</button><button id="downloadBtn">Baixar .md</button>`;
+  manuscript.appendChild(toolbar);
+
+  AGENTS.forEach(a => setAgentState(a.id, null));
+
+  const langInstruction = lang === 'pt-BR' ? 'Escreva em português do Brasil, registro acadêmico formal.' : 'Write in formal academic English.';
+
+  try {
+    // AGENTE 1 — Curador
+    setAgentState('curador','active');
+    const curadorBody = addSection('Estrutura proposta pelo Curador de Dados');
+    const curadorPrompt = `Você é um curador de dados científicos na área odontológica/saúde. A partir das notas brutas abaixo, organize os achados em uma estrutura IMRAD clara (Introdução/contexto, Objetivo, Métodos, Resultados, Discussão/Conclusão), como uma lista de tópicos concisos por seção — não escreva o texto final ainda, apenas organize o conteúdo disponível e aponte lacunas de informação relevantes. ${langInstruction}
+
+Título: ${title}
+Tipo de entrega final: ${outputType === 'resumo' ? 'resumo estruturado para congresso' : 'artigo científico completo'}
+
+Notas brutas:
+${rawData}`;
+    const estrutura = await callClaude('Você é um assistente editorial científico especializado em curadoria de dados de pesquisa.', curadorPrompt);
+    curadorBody.textContent = estrutura;
+    curadorBody.classList.remove('streaming');
+    setAgentState('curador','done');
+
+    let corpoFinal = '';
+
+    if(outputType === 'artigo'){
+      // AGENTE 2 — Redator (artigo completo)
+      setAgentState('redator','active');
+      const redatorBody = addSection('Rascunho do Artigo — Redator Científico');
+      const redatorPrompt = `Com base na estrutura abaixo, redija o corpo completo de um artigo científico (Introdução, Métodos, Resultados, Discussão, Conclusão) em prosa acadêmica fluida, com parágrafos bem construídos, evitando bullet points no texto final. ${langInstruction} Use marcadores de seção em maiúsculas simples (ex.: "INTRODUÇÃO") antes de cada bloco.
+
+Título: ${title}
+
+Estrutura e achados organizados:
+${estrutura}
+
+Notas brutas originais (para detalhes específicos, números e dados):
+${rawData}`;
+      corpoFinal = await callClaude('Você é um redator científico experiente, especializado em publicações da área da saúde.', redatorPrompt);
+      redatorBody.textContent = corpoFinal;
+      redatorBody.classList.remove('streaming');
+      setAgentState('redator','done');
+      setAgentState('sintetizador', null);
+    } else {
+      // AGENTE 3 — Sintetizador (resumo de congresso)
+      setAgentState('sintetizador','active');
+      const sintBody = addSection('Resumo Estruturado — Sintetizador');
+      const limitClause = wordLimit ? `O resumo deve ter NO MÁXIMO ${wordLimit} palavras — isso é um limite rígido do congresso, priorize concisão.` : 'Seja conciso, no padrão típico de resumos de congresso (200-350 palavras).';
+      const sintPrompt = `Com base na estrutura abaixo, escreva um resumo estruturado para congresso científico, com as seções: Objetivo, Métodos, Resultados, Conclusão (adapte os rótulos se o veículo "${venue || 'não especificado'}" tiver convenção diferente). ${limitClause} ${langInstruction}
+
+Título: ${title}
+
+Estrutura e achados organizados:
+${estrutura}
+
+Notas brutas originais:
+${rawData}`;
+      corpoFinal = await callClaude('Você é um especialista em redação de resumos científicos para congressos e eventos acadêmicos.', sintPrompt);
+      sintBody.textContent = corpoFinal;
+      sintBody.classList.remove('streaming');
+      setAgentState('sintetizador','done');
+      setAgentState('redator', null);
+    }
+
+    // AGENTE 4 — Normas
+    setAgentState('normas','active');
+    const normasBody = addSection(`Ajuste às Normas — ${citeStyle}`);
+    const normasPrompt = `Revise o texto abaixo ajustando-o ao estilo de citação ${citeStyle} (formatação de citações no corpo do texto e sugestão de como as referências devem aparecer na lista final, mesmo que as referências completas não estejam disponíveis — nesse caso, apenas indique marcadores de citação [1], [2] etc. no texto e explique brevemente a convenção de referência do estilo ${citeStyle} ao final). Não invente dados científicos novos, apenas ajuste formatação e marcadores de citação. ${langInstruction}
+
+Texto:
+${corpoFinal}`;
+    const textoNormatizado = await callClaude('Você é um editor de normas técnicas e estilos de citação científica.', normasPrompt);
+    normasBody.textContent = textoNormatizado;
+    normasBody.classList.remove('streaming');
+    setAgentState('normas','done');
+
+    // AGENTE 5 — Revisor
+    setAgentState('revisor','active');
+    const revisorBody = addSection('Parecer do Revisor Crítico');
+    const revisorPrompt = `Atue como revisor crítico (peer reviewer) do texto abaixo, destinado a ${outputType === 'resumo' ? 'submissão de resumo em congresso' : 'submissão de artigo'}${venue ? ' em ' + venue : ''}. Dê um parecer objetivo e construtivo: pontos fortes, lacunas ou fragilidades metodológicas, clareza e coesão do texto, e sugestões concretas de melhoria. Seja direto, sem elogios genéricos. ${langInstruction}
+
+Texto avaliado:
+${textoNormatizado}`;
+    const parecer = await callClaude('Você é um revisor científico sênior, rigoroso e construtivo.', revisorPrompt);
+    revisorBody.textContent = parecer;
+    revisorBody.classList.remove('streaming');
+    setAgentState('revisor','done');
+
+    // contagem de palavras do texto final
+    const wc = wordCount(textoNormatizado);
+    const wcDiv = document.createElement('div');
+    wcDiv.className = 'wordcount' + (wordLimit && wc > parseInt(wordLimit) ? ' over' : '');
+    wcDiv.textContent = `Contagem de palavras do texto final: ${wc}` + (wordLimit ? ` / limite de ${wordLimit}` : '');
+    document.getElementById('manuscript').insertBefore(wcDiv, document.getElementById('manuscript').children[1]);
+
+    // toolbar actions
+    const fullText = `# ${title}\n\n${textoNormatizado}\n\n---\n\n## Parecer do revisor\n\n${parecer}`;
+    document.getElementById('copyBtn').addEventListener('click', ()=>{
+      navigator.clipboard.writeText(fullText);
+      document.getElementById('copyBtn').textContent = 'Copiado!';
+      setTimeout(()=>{document.getElementById('copyBtn').textContent='Copiar texto';}, 1500);
+    });
+    document.getElementById('downloadBtn').addEventListener('click', ()=>{
+      const blob = new Blob([fullText], {type:'text/markdown'});
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = (title || 'manuscrito').toLowerCase().replace(/\s+/g,'-') + '.md';
+      a.click();
+      URL.revokeObjectURL(url);
+    });
+
+  } catch(err){
+    const manuscriptEl = document.getElementById('manuscript');
+    const errBox = document.createElement('div');
+    errBox.className = 'error-box';
+    errBox.textContent = 'Não foi possível concluir: ' + err.message;
+    manuscriptEl.appendChild(errBox);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Acionar equipe editorial';
+  }
+}
+</script>
+
+</body>
+</html>
