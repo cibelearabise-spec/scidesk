@@ -212,6 +212,73 @@
     margin-bottom:16px;
   }
 
+  .apikey-box{
+    background:var(--white);
+    border:1px solid var(--rule);
+    border-radius:2px;
+    padding:12px 12px 14px;
+    margin-bottom:18px;
+  }
+  .apikey-box label{margin-top:0;}
+  .apikey-box .note{
+    font-size:0.7rem;
+    color:var(--ink-soft);
+    margin-top:6px;
+    line-height:1.4;
+  }
+  .apikey-status{
+    font-family:'IBM Plex Mono', monospace;
+    font-size:0.7rem;
+    margin-top:6px;
+  }
+  .apikey-status.ok{color:var(--green-ok);}
+  .apikey-status.missing{color:var(--crimson);}
+
+  .research-warning{
+    background:#FBF0DD;
+    border:1px solid #C99A3C;
+    color:#6B4E17;
+    padding:12px 14px;
+    font-size:0.82rem;
+    border-radius:2px;
+    margin-bottom:18px;
+    line-height:1.5;
+  }
+  .research-warning strong{display:block; margin-bottom:4px;}
+
+  .attach-row{
+    display:flex;
+    align-items:center;
+    gap:10px;
+    margin-top:8px;
+  }
+  .attach-btn{
+    background:transparent;
+    border:1px dashed var(--rule);
+    color:var(--ink-soft);
+    font-family:'IBM Plex Mono', monospace;
+    font-size:0.72rem;
+    padding:7px 12px;
+    border-radius:2px;
+    cursor:pointer;
+  }
+  .attach-btn:hover{border-color:var(--crimson); color:var(--crimson);}
+  .attach-list{
+    margin-top:6px;
+    font-size:0.72rem;
+    color:var(--ink-soft);
+  }
+  .attach-list .file-row{
+    display:flex;
+    justify-content:space-between;
+    align-items:center;
+    padding:3px 0;
+  }
+  .attach-list .file-row button{
+    background:none; border:none; color:var(--crimson);
+    font-family:'IBM Plex Mono', monospace; font-size:0.7rem; cursor:pointer;
+  }
+
   ::-webkit-scrollbar{width:8px;}
   ::-webkit-scrollbar-thumb{background:var(--rule); border-radius:4px;}
 </style>
@@ -221,13 +288,20 @@
 <div class="masthead">
   <div>
     <h1>SciDesk</h1>
-    <div class="kicker">mesa editorial de agentes para artigos e resumos de congresso</div>
+    <div class="kicker">mesa editorial de agentes · versão Gemini (GitHub Pages)</div>
   </div>
   <div class="issue" id="dateline"></div>
 </div>
 
 <div class="layout">
   <div class="desk">
+    <div class="apikey-box">
+      <label>Chave de API do Gemini</label>
+      <input type="text" id="apiKey" placeholder="AIza...">
+      <div class="apikey-status" id="apiKeyStatus"></div>
+      <div class="note">Fica salva só neste navegador (nunca no código do site). Obrigatória para funcionar — pegue a sua gratuitamente em aistudio.google.com/apikey.</div>
+    </div>
+
     <h2>Manuscrito</h2>
 
     <label>Título / tema da pesquisa</label>
@@ -263,8 +337,14 @@
     <label>Periódico / congresso alvo (opcional)</label>
     <input type="text" id="venue" placeholder="Ex.: SBPqO, IADR, revista X">
 
-    <label>Dados, achados e notas brutas</label>
-    <textarea id="rawData" placeholder="Cole aqui: objetivo do estudo, metodologia usada, principais resultados, números, conclusões preliminares, referências-chave..."></textarea>
+    <label>Dados, achados e notas brutas (opcional)</label>
+    <textarea id="rawData" placeholder="Cole aqui, se tiver: objetivo do estudo, metodologia usada, principais resultados, números, conclusões preliminares, referências-chave. Se deixar em branco, a equipe pesquisa a literatura sozinha a partir do título — você revisa e corrige o resultado no final."></textarea>
+    <div class="attach-row">
+      <input type="file" id="fileInput" accept=".txt,.pdf" multiple style="display:none;">
+      <button type="button" class="attach-btn" id="attachBtn">＋ Anexar artigo (.txt / .pdf)</button>
+      <span id="attachSpinner" style="display:none; font-size:0.72rem; color:var(--ink-soft);">lendo arquivo...</span>
+    </div>
+    <div class="attach-list" id="attachList"></div>
 
     <button class="run-btn" id="runBtn">Acionar equipe editorial</button>
 
@@ -279,7 +359,10 @@
   </div>
 </div>
 
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <script>
+pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+
 const dateline = document.getElementById('dateline');
 const today = new Date();
 dateline.textContent = today.toLocaleDateString('pt-BR', {day:'2-digit', month:'long', year:'numeric'}).toUpperCase();
@@ -313,24 +396,136 @@ outputTypeEl.addEventListener('change', ()=>{
   limitLabel.textContent = outputTypeEl.value === 'resumo' ? 'Limite de palavras (resumo)' : 'Limite de palavras (opcional, por seção)';
 });
 
-async function callClaude(systemPrompt, userPrompt){
-  const response = await fetch("https://api.anthropic.com/v1/messages", {
+const fileInput = document.getElementById('fileInput');
+const attachBtn = document.getElementById('attachBtn');
+const attachList = document.getElementById('attachList');
+const attachSpinner = document.getElementById('attachSpinner');
+const rawDataEl = document.getElementById('rawData');
+const attachedFiles = []; // {name, text}
+
+attachBtn.addEventListener('click', ()=> fileInput.click());
+
+fileInput.addEventListener('change', async (e)=>{
+  const files = Array.from(e.target.files);
+  if(!files.length) return;
+  attachSpinner.style.display = 'inline';
+  for(const file of files){
+    try{
+      let text = '';
+      if(file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf')){
+        text = await extractPdfText(file);
+      } else {
+        text = await file.text();
+      }
+      attachedFiles.push({ name: file.name, text });
+    }catch(err){
+      attachedFiles.push({ name: file.name, text: '', error: true });
+    }
+  }
+  attachSpinner.style.display = 'none';
+  fileInput.value = '';
+  renderAttachList();
+  syncRawDataFromFiles();
+});
+
+async function extractPdfText(file){
+  const buf = await file.arrayBuffer();
+  const pdf = await pdfjsLib.getDocument({ data: buf }).promise;
+  let full = '';
+  const maxPages = Math.min(pdf.numPages, 40); // limite de segurança
+  for(let i=1; i<=maxPages; i++){
+    const page = await pdf.getPage(i);
+    const content = await page.getTextContent();
+    full += content.items.map(it => it.str).join(' ') + '\n';
+  }
+  return full;
+}
+
+function renderAttachList(){
+  attachList.innerHTML = '';
+  attachedFiles.forEach((f, idx)=>{
+    const row = document.createElement('div');
+    row.className = 'file-row';
+    const label = f.error ? `${f.name} (falha ao ler)` : `${f.name} — ${wordCount(f.text)} palavras extraídas`;
+    row.innerHTML = `<span>${label}</span><button data-idx="${idx}">remover</button>`;
+    row.querySelector('button').addEventListener('click', ()=>{
+      attachedFiles.splice(idx,1);
+      renderAttachList();
+      syncRawDataFromFiles();
+    });
+    attachList.appendChild(row);
+  });
+}
+
+let manualRawData = '';
+rawDataEl.addEventListener('focus', ()=>{ manualRawData = rawDataEl.dataset.manual || ''; });
+
+function syncRawDataFromFiles(){
+  const filesText = attachedFiles.filter(f=>!f.error && f.text.trim()).map(f=>`--- ${f.name} ---\n${f.text.trim()}`).join('\n\n');
+  const manual = rawDataEl.dataset.manual || '';
+  rawDataEl.value = [manual, filesText].filter(Boolean).join('\n\n');
+}
+
+// guarda o que foi digitado manualmente, separado do que veio de arquivo
+rawDataEl.addEventListener('input', ()=>{
+  if(!attachedFiles.length){ rawDataEl.dataset.manual = rawDataEl.value; }
+});
+
+const apiKeyInput = document.getElementById('apiKey');
+const apiKeyStatus = document.getElementById('apiKeyStatus');
+const savedKey = localStorage.getItem('scidesk_gemini_key');
+if(savedKey){
+  apiKeyInput.value = savedKey;
+  apiKeyStatus.textContent = 'Chave carregada deste navegador.';
+  apiKeyStatus.className = 'apikey-status ok';
+}
+apiKeyInput.addEventListener('change', ()=>{
+  const v = apiKeyInput.value.trim();
+  if(v){
+    localStorage.setItem('scidesk_gemini_key', v);
+    apiKeyStatus.textContent = 'Chave salva neste navegador.';
+    apiKeyStatus.className = 'apikey-status ok';
+  } else {
+    localStorage.removeItem('scidesk_gemini_key');
+    apiKeyStatus.textContent = '';
+  }
+});
+
+const GEMINI_MODEL = 'gemini-3.6-flash';
+
+async function callClaude(systemPrompt, userPrompt, allowWebSearch){
+  const key = apiKeyInput.value.trim();
+  if(!key){
+    throw new Error('Cole sua chave de API do Gemini no campo do topo do formulário antes de acionar a equipe.');
+  }
+  const body = {
+    contents: [{ parts: [{ text: userPrompt }] }],
+    systemInstruction: { parts: [{ text: systemPrompt }] }
+  };
+  if(allowWebSearch){
+    body.tools = [{ googleSearch: {} }];
+  }
+  const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      model: "claude-sonnet-4-6",
-      max_tokens: 2000,
-      system: systemPrompt,
-      messages: [{ role: "user", content: userPrompt }]
-    })
+    headers: {
+      "Content-Type": "application/json",
+      "x-goog-api-key": key
+    },
+    body: JSON.stringify(body)
   });
   if(!response.ok){
     const t = await response.text();
+    if(response.status === 400 || response.status === 401 || response.status === 403){
+      throw new Error('Chave de API ausente ou inválida. Confira a chave colada no campo do topo do formulário.');
+    }
     throw new Error('Falha na chamada da API: ' + t.slice(0,200));
   }
   const data = await response.json();
-  const textBlock = data.content.find(b => b.type === 'text');
-  return textBlock ? textBlock.text : '';
+  const candidate = data.candidates && data.candidates[0];
+  if(!candidate || !candidate.content || !candidate.content.parts){
+    throw new Error('Resposta vazia do Gemini — tente novamente.');
+  }
+  return candidate.content.parts.filter(p => p.text).map(p => p.text).join('\n');
 }
 
 function addSection(title){
@@ -361,10 +556,12 @@ async function runPipeline(){
   const wordLimit = document.getElementById('wordLimit').value.trim();
   const venue = document.getElementById('venue').value.trim();
 
-  if(!title || !rawData){
-    alert('Preencha ao menos o título e os dados/achados da pesquisa.');
+  if(!title){
+    alert('Preencha ao menos o título/tema da pesquisa.');
     return;
   }
+
+  const researchMode = !rawData;
 
   const btn = document.getElementById('runBtn');
   btn.disabled = true;
@@ -374,6 +571,13 @@ async function runPipeline(){
   const manuscript = document.getElementById('manuscript');
   manuscript.style.display = 'block';
   manuscript.innerHTML = '';
+
+  if(researchMode){
+    const warn = document.createElement('div');
+    warn.className = 'research-warning';
+    warn.innerHTML = '<strong>Modo pesquisa automática</strong>Nenhum dado bruto foi informado — a equipe pesquisou a literatura e montou um rascunho sozinha. Números, resultados e conclusões específicas AINDA NÃO são do seu estudo real e precisam ser conferidos e substituídos antes de qualquer submissão.';
+    manuscript.appendChild(warn);
+  }
 
   const toolbar = document.createElement('div');
   toolbar.className = 'toolbar';
@@ -388,14 +592,19 @@ async function runPipeline(){
     // AGENTE 1 — Curador
     setAgentState('curador','active');
     const curadorBody = addSection('Estrutura proposta pelo Curador de Dados');
-    const curadorPrompt = `Você é um curador de dados científicos na área odontológica/saúde. A partir das notas brutas abaixo, organize os achados em uma estrutura IMRAD clara (Introdução/contexto, Objetivo, Métodos, Resultados, Discussão/Conclusão), como uma lista de tópicos concisos por seção — não escreva o texto final ainda, apenas organize o conteúdo disponível e aponte lacunas de informação relevantes. ${langInstruction}
+    const curadorPrompt = researchMode
+      ? `Você é um curador de dados científicos na área odontológica/saúde. Nenhuma nota bruta foi fornecida para o tema abaixo — use busca na web para levantar contexto e literatura recente relevante, e monte uma estrutura IMRAD (Introdução/contexto, Objetivo, Métodos plausíveis para esse tipo de estudo, Resultados e Discussão/Conclusão), deixando MUITO CLARO, em cada seção onde faltam dados reais do estudo do usuário, marcações do tipo [DADO REAL NECESSÁRIO AQUI: ...]. Não invente números específicos de resultados. ${langInstruction}
+
+Título: ${title}
+Tipo de entrega final: ${outputType === 'resumo' ? 'resumo estruturado para congresso' : 'artigo científico completo'}`
+      : `Você é um curador de dados científicos na área odontológica/saúde. A partir das notas brutas abaixo, organize os achados em uma estrutura IMRAD clara (Introdução/contexto, Objetivo, Métodos, Resultados, Discussão/Conclusão), como uma lista de tópicos concisos por seção — não escreva o texto final ainda, apenas organize o conteúdo disponível e aponte lacunas de informação relevantes. ${langInstruction}
 
 Título: ${title}
 Tipo de entrega final: ${outputType === 'resumo' ? 'resumo estruturado para congresso' : 'artigo científico completo'}
 
 Notas brutas:
 ${rawData}`;
-    const estrutura = await callClaude('Você é um assistente editorial científico especializado em curadoria de dados de pesquisa.', curadorPrompt);
+    const estrutura = await callClaude('Você é um assistente editorial científico especializado em curadoria de dados de pesquisa.', curadorPrompt, researchMode);
     curadorBody.textContent = estrutura;
     curadorBody.classList.remove('streaming');
     setAgentState('curador','done');
@@ -412,9 +621,7 @@ Título: ${title}
 
 Estrutura e achados organizados:
 ${estrutura}
-
-Notas brutas originais (para detalhes específicos, números e dados):
-${rawData}`;
+${researchMode ? '\nIMPORTANTE: mantenha as marcações [DADO REAL NECESSÁRIO AQUI: ...] no texto onde a estrutura acima as indicar — não as substitua por números inventados.' : `\nNotas brutas originais (para detalhes específicos, números e dados):\n${rawData}`}`;
       corpoFinal = await callClaude('Você é um redator científico experiente, especializado em publicações da área da saúde.', redatorPrompt);
       redatorBody.textContent = corpoFinal;
       redatorBody.classList.remove('streaming');
@@ -431,9 +638,7 @@ Título: ${title}
 
 Estrutura e achados organizados:
 ${estrutura}
-
-Notas brutas originais:
-${rawData}`;
+${researchMode ? '\nIMPORTANTE: mantenha as marcações [DADO REAL NECESSÁRIO AQUI: ...] no texto onde a estrutura acima as indicar — não as substitua por números inventados.' : `\nNotas brutas originais:\n${rawData}`}`;
       corpoFinal = await callClaude('Você é um especialista em redação de resumos científicos para congressos e eventos acadêmicos.', sintPrompt);
       sintBody.textContent = corpoFinal;
       sintBody.classList.remove('streaming');
