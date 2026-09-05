@@ -524,7 +524,16 @@ async function callClaude(systemPrompt, userPrompt, allowWebSearch){
       if(!candidate || !candidate.content || !candidate.content.parts){
         throw new Error('Resposta vazia do Gemini — tente novamente.');
       }
-      return candidate.content.parts.filter(p => p.text).map(p => p.text).join('\n');
+      const text = candidate.content.parts.filter(p => p.text).map(p => p.text).join('\n');
+      // Extrai as fontes reais usadas pela busca do Google (grounding), quando houver
+      let sources = [];
+      const chunks = candidate.groundingMetadata && candidate.groundingMetadata.groundingChunks;
+      if(chunks && chunks.length){
+        sources = chunks
+          .filter(c => c.web && c.web.uri)
+          .map(c => ({ title: c.web.title || c.web.uri, uri: c.web.uri }));
+      }
+      return { text, sources };
     }
 
     const t = await response.text();
@@ -578,6 +587,14 @@ async function runPipeline(){
 
   const researchMode = !rawData;
 
+  // Legenda de fontes reais: cada arquivo anexado vira um número fixo de citação.
+  // Os agentes são instruídos a usar SOMENTE esses números — nunca inventar novos.
+  const sourceLegend = attachedFiles
+    .filter(f => !f.error && f.text.trim())
+    .map((f, idx) => `[${idx+1}] ${f.name}`)
+    .join('\n');
+  const sourceLegendCount = attachedFiles.filter(f => !f.error && f.text.trim()).length;
+
   const btn = document.getElementById('runBtn');
   btn.disabled = true;
   btn.textContent = 'Equipe em trabalho...';
@@ -608,18 +625,24 @@ async function runPipeline(){
     setAgentState('curador','active');
     const curadorBody = addSection('Estrutura proposta pelo Curador de Dados');
     const curadorPrompt = researchMode
-      ? `Você é um curador de dados científicos na área odontológica/saúde. Nenhuma nota bruta foi fornecida para o tema abaixo — use busca na web para levantar contexto e literatura recente relevante, e monte uma estrutura IMRAD (Introdução/contexto, Objetivo, Métodos plausíveis para esse tipo de estudo, Resultados e Discussão/Conclusão), deixando MUITO CLARO, em cada seção onde faltam dados reais do estudo do usuário, marcações do tipo [DADO REAL NECESSÁRIO AQUI: ...]. Não invente números específicos de resultados. ${langInstruction}
+      ? `Você é um curador de dados científicos na área odontológica/saúde. Nenhuma nota bruta foi fornecida para o tema abaixo — use busca na web para levantar contexto e literatura recente relevante, e monte uma estrutura IMRAD (Introdução/contexto, Objetivo, Métodos plausíveis para esse tipo de estudo, Resultados e Discussão/Conclusão), deixando MUITO CLARO, em cada seção onde faltam dados reais do estudo do usuário, marcações do tipo [DADO REAL NECESSÁRIO AQUI: ...]. Não invente números específicos de resultados, e não invente marcadores de citação numéricos [1][2] etc — as fontes reais da busca serão anexadas automaticamente depois, você só precisa escrever o conteúdo. ${langInstruction}
 
 Título: ${title}
 Tipo de entrega final: ${outputType === 'resumo' ? 'resumo estruturado para congresso' : 'artigo científico completo'}`
-      : `Você é um curador de dados científicos na área odontológica/saúde. A partir das notas brutas abaixo, organize os achados em uma estrutura IMRAD clara (Introdução/contexto, Objetivo, Métodos, Resultados, Discussão/Conclusão), como uma lista de tópicos concisos por seção — não escreva o texto final ainda, apenas organize o conteúdo disponível e aponte lacunas de informação relevantes. ${langInstruction}
+      : `Você é um curador de dados científicos na área odontológica/saúde. A partir das notas/artigos brutos abaixo, organize os achados em uma estrutura IMRAD clara (Introdução/contexto, Objetivo, Métodos, Resultados, Discussão/Conclusão), como uma lista de tópicos concisos por seção — não escreva o texto final ainda, apenas organize o conteúdo disponível e aponte lacunas de informação relevantes. ${langInstruction}
 
+${sourceLegendCount > 0 ? `IMPORTANTE — CITAÇÃO ESTRITA: os únicos artigos reais disponíveis são estes, cada um com número FIXO — nunca use um número fora desta lista, nunca crie fontes novas:
+${sourceLegend}
+Sempre que um trecho das notas vier claramente de um desses arquivos, marque com o número correspondente, ex.: "a HOF restaura contornos faciais [2]". Se uma afirmação das notas não puder ser localizada em nenhum desses arquivos (ex.: veio de texto digitado à mão sem fonte), NÃO invente um número — deixe sem marcador.
+` : ''}
 Título: ${title}
 Tipo de entrega final: ${outputType === 'resumo' ? 'resumo estruturado para congresso' : 'artigo científico completo'}
 
-Notas brutas:
+Notas/artigos brutos:
 ${rawData}`;
-    const estrutura = await callClaude('Você é um assistente editorial científico especializado em curadoria de dados de pesquisa.', curadorPrompt, researchMode);
+    const curadorResult = await callClaude('Você é um assistente editorial científico especializado em curadoria de dados de pesquisa.', curadorPrompt, researchMode);
+    const estrutura = curadorResult.text;
+    const searchSources = curadorResult.sources || [];
     curadorBody.textContent = estrutura;
     curadorBody.classList.remove('streaming');
     setAgentState('curador','done');
@@ -636,8 +659,9 @@ Título: ${title}
 
 Estrutura e achados organizados:
 ${estrutura}
-${researchMode ? '\nIMPORTANTE: mantenha as marcações [DADO REAL NECESSÁRIO AQUI: ...] no texto onde a estrutura acima as indicar — não as substitua por números inventados.' : `\nNotas brutas originais (para detalhes específicos, números e dados):\n${rawData}`}`;
-      corpoFinal = await callClaude('Você é um redator científico experiente, especializado em publicações da área da saúde.', redatorPrompt);
+${researchMode ? '\nIMPORTANTE: mantenha as marcações [DADO REAL NECESSÁRIO AQUI: ...] no texto onde a estrutura acima as indicar — não as substitua por números inventados. Não crie marcadores [1][2] etc, eles serão adicionados depois a partir das fontes reais da pesquisa.' : sourceLegendCount > 0 ? `\nIMPORTANTE — CITAÇÃO ESTRITA: preserve exatamente os marcadores numéricos [n] já usados na estrutura acima. NÃO crie números novos além destes:\n${sourceLegend}\nNotas/artigos brutos originais (para detalhes específicos, números e dados):\n${rawData}` : `\nNotas brutas originais (para detalhes específicos, números e dados):\n${rawData}`}`;
+      const redatorResult = await callClaude('Você é um redator científico experiente, especializado em publicações da área da saúde.', redatorPrompt);
+      corpoFinal = redatorResult.text;
       redatorBody.textContent = corpoFinal;
       redatorBody.classList.remove('streaming');
       setAgentState('redator','done');
@@ -653,8 +677,9 @@ Título: ${title}
 
 Estrutura e achados organizados:
 ${estrutura}
-${researchMode ? '\nIMPORTANTE: mantenha as marcações [DADO REAL NECESSÁRIO AQUI: ...] no texto onde a estrutura acima as indicar — não as substitua por números inventados.' : `\nNotas brutas originais:\n${rawData}`}`;
-      corpoFinal = await callClaude('Você é um especialista em redação de resumos científicos para congressos e eventos acadêmicos.', sintPrompt);
+${researchMode ? '\nIMPORTANTE: mantenha as marcações [DADO REAL NECESSÁRIO AQUI: ...] no texto onde a estrutura acima as indicar — não as substitua por números inventados. Não crie marcadores [1][2] etc, eles serão adicionados depois a partir das fontes reais da pesquisa.' : sourceLegendCount > 0 ? `\nIMPORTANTE — CITAÇÃO ESTRITA: preserve exatamente os marcadores numéricos [n] já usados na estrutura acima. NÃO crie números novos além destes:\n${sourceLegend}\nNotas/artigos brutos originais:\n${rawData}` : `\nNotas brutas originais:\n${rawData}`}`;
+      const sintResult = await callClaude('Você é um especialista em redação de resumos científicos para congressos e eventos acadêmicos.', sintPrompt);
+      corpoFinal = sintResult.text;
       sintBody.textContent = corpoFinal;
       sintBody.classList.remove('streaming');
       setAgentState('sintetizador','done');
@@ -664,11 +689,31 @@ ${researchMode ? '\nIMPORTANTE: mantenha as marcações [DADO REAL NECESSÁRIO A
     // AGENTE 4 — Normas
     setAgentState('normas','active');
     const normasBody = addSection(`Ajuste às Normas — ${citeStyle}`);
-    const normasPrompt = `Revise o texto abaixo ajustando-o ao estilo de citação ${citeStyle} (formatação de citações no corpo do texto e sugestão de como as referências devem aparecer na lista final, mesmo que as referências completas não estejam disponíveis — nesse caso, apenas indique marcadores de citação [1], [2] etc. no texto e explique brevemente a convenção de referência do estilo ${citeStyle} ao final). Não invente dados científicos novos, apenas ajuste formatação e marcadores de citação. ${langInstruction}
+
+    let referenceBlock = '';
+    let referenceInstruction = '';
+    if(sourceLegendCount > 0){
+      // Fontes reais = os arquivos anexados. Extrai metadados bibliográficos de cada um.
+      const filesForExtraction = attachedFiles.filter(f => !f.error && f.text.trim());
+      const extractionPrompt = `Para cada um dos ${filesForExtraction.length} artigos abaixo, extraia (quando identificável no texto) autor(es), título, periódico/fonte e ano. Responda uma linha por artigo, no formato "[n] dados extraídos ou formatados conforme o estilo ${citeStyle}". Se os metadados não estiverem claros no texto fornecido, escreva "[n] Fonte: <nome do arquivo> — metadados bibliográficos completos não identificados automaticamente; confira o arquivo original." Não invente autores, títulos ou anos que não estejam no texto.
+
+${filesForExtraction.map((f, idx) => `[${idx+1}] ARQUIVO: ${f.name}\nTRECHO INICIAL DO TEXTO:\n${f.text.slice(0,3000)}`).join('\n\n---\n\n')}`;
+      const extractionResult = await callClaude('Você é um especialista em extração de metadados bibliográficos de artigos científicos.', extractionPrompt);
+      referenceBlock = extractionResult.text;
+      referenceInstruction = `Ao final do texto, inclua uma seção "REFERÊNCIAS" com exatamente esta lista, sem alterar os números nem inventar novas entradas — apenas formate cada linha cuidadosamente no padrão ${citeStyle}:\n${referenceBlock}`;
+    } else if(researchMode && searchSources.length){
+      referenceBlock = searchSources.map((s, idx) => `[${idx+1}] ${s.title} — ${s.uri}`).join('\n');
+      referenceInstruction = `Ao final do texto, inclua uma seção "REFERÊNCIAS" com esta lista de fontes reais encontradas na pesquisa (mantenha os links), formatada o mais próximo possível do padrão ${citeStyle} dado que são páginas web/artigos online:\n${referenceBlock}\nNumere os marcadores de citação no corpo do texto de acordo com esta mesma lista, na ordem em que cada fonte é usada.`;
+    } else {
+      referenceInstruction = 'Não há fontes reais disponíveis nesta rodada (nem arquivos anexados nem resultados de busca). NÃO crie marcadores de citação numéricos nem uma lista de referências fictícia — deixe claro ao final que referências precisam ser adicionadas manualmente pelo usuário.';
+    }
+
+    const normasPrompt = `Revise o texto abaixo ajustando-o ao estilo de citação ${citeStyle} (formatação de citações no corpo do texto). ${referenceInstruction} Não invente dados científicos novos, apenas ajuste formatação, mantenha os marcadores de citação já existentes no texto e monte a lista final de referências como instruído. ${langInstruction}
 
 Texto:
 ${corpoFinal}`;
-    const textoNormatizado = await callClaude('Você é um editor de normas técnicas e estilos de citação científica.', normasPrompt);
+    const normasResult = await callClaude('Você é um editor de normas técnicas e estilos de citação científica, rigoroso quanto a nunca inventar referências.', normasPrompt);
+    const textoNormatizado = normasResult.text;
     normasBody.textContent = textoNormatizado;
     normasBody.classList.remove('streaming');
     setAgentState('normas','done');
@@ -680,7 +725,8 @@ ${corpoFinal}`;
 
 Texto avaliado:
 ${textoNormatizado}`;
-    const parecer = await callClaude('Você é um revisor científico sênior, rigoroso e construtivo.', revisorPrompt);
+    const revisorResult = await callClaude('Você é um revisor científico sênior, rigoroso e construtivo.', revisorPrompt);
+    const parecer = revisorResult.text;
     revisorBody.textContent = parecer;
     revisorBody.classList.remove('streaming');
     setAgentState('revisor','done');
