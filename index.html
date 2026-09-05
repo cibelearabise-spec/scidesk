@@ -653,7 +653,7 @@ ${rawData}`;
       // AGENTE 2 — Redator (artigo completo)
       setAgentState('redator','active');
       const redatorBody = addSection('Rascunho do Artigo — Redator Científico');
-      const redatorPrompt = `Com base na estrutura abaixo, redija o corpo completo de um artigo científico (Introdução, Métodos, Resultados, Discussão, Conclusão) em prosa acadêmica fluida, com parágrafos bem construídos, evitando bullet points no texto final. ${langInstruction} Use marcadores de seção em maiúsculas simples (ex.: "INTRODUÇÃO") antes de cada bloco.
+      const redatorPrompt = `Com base na estrutura abaixo, redija o corpo completo de um artigo científico (Introdução, Métodos, Resultados, Discussão, Conclusão) em prosa acadêmica fluida, com parágrafos bem construídos, evitando bullet points no texto final. ${langInstruction} Use marcadores de seção em maiúsculas simples (ex.: "INTRODUÇÃO") antes de cada bloco. Comece a resposta com o título do artigo como cabeçalho markdown: "# ${title}". Não escreva nenhuma frase introdutória explicando o que você vai fazer — comece direto pelo título e pelo texto.
 
 Título: ${title}
 
@@ -671,7 +671,7 @@ ${researchMode ? '\nIMPORTANTE: mantenha as marcações [DADO REAL NECESSÁRIO A
       setAgentState('sintetizador','active');
       const sintBody = addSection('Resumo Estruturado — Sintetizador');
       const limitClause = wordLimit ? `O resumo deve ter NO MÁXIMO ${wordLimit} palavras — isso é um limite rígido do congresso, priorize concisão.` : 'Seja conciso, no padrão típico de resumos de congresso (200-350 palavras).';
-      const sintPrompt = `Com base na estrutura abaixo, escreva um resumo estruturado para congresso científico, com as seções: Objetivo, Métodos, Resultados, Conclusão (adapte os rótulos se o veículo "${venue || 'não especificado'}" tiver convenção diferente). ${limitClause} ${langInstruction}
+      const sintPrompt = `Com base na estrutura abaixo, escreva um resumo estruturado para congresso científico, com as seções: Objetivo, Métodos, Resultados, Conclusão (adapte os rótulos se o veículo "${venue || 'não especificado'}" tiver convenção diferente). ${limitClause} Comece a resposta com o título como cabeçalho markdown: "# ${title}", sem nenhuma frase introdutória antes dele. ${langInstruction}
 
 Título: ${title}
 
@@ -708,7 +708,7 @@ ${filesForExtraction.map((f, idx) => `[${idx+1}] ARQUIVO: ${f.name}\nTRECHO INIC
       referenceInstruction = 'Não há fontes reais disponíveis nesta rodada (nem arquivos anexados nem resultados de busca). NÃO crie marcadores de citação numéricos nem uma lista de referências fictícia — deixe claro ao final que referências precisam ser adicionadas manualmente pelo usuário.';
     }
 
-    const normasPrompt = `Revise o texto abaixo ajustando-o ao estilo de citação ${citeStyle} (formatação de citações no corpo do texto). ${referenceInstruction} Não invente dados científicos novos, apenas ajuste formatação, mantenha os marcadores de citação já existentes no texto e monte a lista final de referências como instruído. ${langInstruction}
+    const normasPrompt = `Revise o texto abaixo ajustando-o ao estilo de citação ${citeStyle} (formatação de citações no corpo do texto). ${referenceInstruction} Não invente dados científicos novos, apenas ajuste formatação, mantenha os marcadores de citação já existentes no texto, mantenha o título como cabeçalho no topo e monte a lista final de referências como instruído. IMPORTANTE: responda apenas com o texto final do artigo (título + corpo + referências) — NUNCA inclua frases introdutórias tipo "Abaixo apresenta-se..." ou qualquer comentário meta sobre a revisão feita. ${langInstruction}
 
 Texto:
 ${corpoFinal}`;
@@ -731,6 +731,39 @@ ${textoNormatizado}`;
     revisorBody.classList.remove('streaming');
     setAgentState('revisor','done');
 
+    // Botão para aplicar as correções fazíveis do parecer, sem inventar fontes novas
+    const applyBtnWrap = document.createElement('div');
+    applyBtnWrap.style.margin = '14px 0 30px';
+    const applyBtn = document.createElement('button');
+    applyBtn.type = 'button';
+    applyBtn.className = 'attach-btn';
+    applyBtn.textContent = 'Aplicar correções do revisor';
+    applyBtnWrap.appendChild(applyBtn);
+    document.getElementById('manuscript').appendChild(applyBtnWrap);
+
+    applyBtn.addEventListener('click', async ()=>{
+      applyBtn.disabled = true;
+      applyBtn.textContent = 'Aplicando...';
+      try{
+        const correctorBody = addSection('Versão Corrigida — aplicando o parecer do revisor');
+        const correctorPrompt = `Você recebeu um artigo científico já formatado e o parecer crítico de um revisor sobre ele. Aplique SOMENTE as recomendações do parecer que sejam corrigíveis com o material já disponível (formatação, estrutura, terminologia, coesão, remoção de duplicatas, reorganização de seções, precisão conceitual). NÃO invente nenhuma citação numérica nova além das já existentes no texto${sourceLegendCount > 0 ? ` (fontes reais disponíveis:\n${sourceLegend})` : ''}. Para qualquer recomendação do revisor que dependa de material que você não tem (ex.: mais artigos da literatura, novos dados clínicos, ampliação da amostragem bibliográfica), NÃO tente cumprir — em vez disso, liste-a claramente ao final, em uma seção "PENDÊNCIAS QUE EXIGEM NOVO MATERIAL", explicando exatamente o que falta trazer. ${langInstruction}
+
+TEXTO ATUAL:
+${textoNormatizado}
+
+PARECER DO REVISOR:
+${parecer}`;
+        const correctorResult = await callClaude('Você é um editor científico que aplica revisões com rigor, sem jamais inventar dados ou referências novas.', correctorPrompt);
+        correctorBody.textContent = correctorResult.text;
+        correctorBody.classList.remove('streaming');
+        applyBtnWrap.remove();
+      } catch(err){
+        alert('Não foi possível aplicar as correções: ' + err.message);
+        applyBtn.disabled = false;
+        applyBtn.textContent = 'Aplicar correções do revisor';
+      }
+    });
+
     // contagem de palavras do texto final
     const wc = wordCount(textoNormatizado);
     const wcDiv = document.createElement('div');
@@ -739,7 +772,7 @@ ${textoNormatizado}`;
     document.getElementById('manuscript').insertBefore(wcDiv, document.getElementById('manuscript').children[1]);
 
     // toolbar actions
-    const fullText = `# ${title}\n\n${textoNormatizado}\n\n---\n\n## Parecer do revisor\n\n${parecer}`;
+    const fullText = `${textoNormatizado}\n\n---\n\n## Parecer do revisor\n\n${parecer}`;
     document.getElementById('copyBtn').addEventListener('click', ()=>{
       navigator.clipboard.writeText(fullText);
       document.getElementById('copyBtn').textContent = 'Copiado!';
